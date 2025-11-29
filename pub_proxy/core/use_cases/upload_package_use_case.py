@@ -2,11 +2,14 @@ import os
 import tempfile
 import hashlib
 from datetime import datetime
+import re
+import tarfile
 from injector import inject
 
 from pub_proxy.core.entities.package import Package, PackageVersion
 from pub_proxy.infrastructure.repositories.package_repository import PackageRepository
 from pub_proxy.core.interfaces.storage_service_interface import StorageServiceInterface
+from pub_proxy.core.app_config import AppConfig
 
 """
 Upload Package Use Case module.
@@ -36,15 +39,17 @@ class UploadPackageUseCase:
     """
     
     @inject
-    def __init__(self, storage_service: StorageServiceInterface, package_repository: PackageRepository):
+    def __init__(self, storage_service: StorageServiceInterface, package_repository: PackageRepository, config: AppConfig):
         """
         Initialize the use case with its dependencies.
         
         @param storage_service: The service for interacting with storage (GCP or local).
         @param package_repository: The repository for storing package information.
+        @param config: The application configuration.
         """
         self.storage_service = storage_service
         self.package_repository = package_repository
+        self.config = config
     
     def execute(self, package_name, version, file_object):
         """
@@ -53,8 +58,8 @@ class UploadPackageUseCase:
         This method stores the package archive in the storage and creates or updates
         the package information in the repository.
         
-        @param package_name: The name of the package.
-        @param version: The version of the package.
+        @param package_name: The name of the package (optional, extracted from tarball if None).
+        @param version: The version of the package (optional, extracted from tarball if None).
         @param file_object: The file object containing the package archive.
         @return: A dictionary with the result of the upload operation.
         """
@@ -62,72 +67,123 @@ class UploadPackageUseCase:
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.tar.gz')
         file_object.save(temp_file.name)
         
-        # Calculate the SHA-256 hash of the file
-        sha256_hash = self._calculate_sha256(temp_file.name)
-        
-        # Upload the file to the storage
-        blob_name = f'{package_name}/{version}/archive.tar.gz'
-        self.storage_service.upload_file_to_blob(temp_file.name, blob_name)
-        archive_url = self.storage_service.get_blob_url(blob_name)
-        
-        # Create or update the package information in the repository
-        package = self.package_repository.get_package(package_name)
-        
-        if not package:
-            # Create a new package
-            package_version = PackageVersion(
-                version=version,
-                published=datetime.now(),
-                archive_url=archive_url,
-                archive_sha256=sha256_hash
-            )
+        try:
+            # Extract package info if not provided
+            if not package_name or not version:
+                extracted_name, extracted_version = self._extract_metadata(temp_file.name)
+                package_name = package_name or extracted_name
+                version = version or extracted_version
             
-            package = Package(
-                name=package_name,
-                versions=[package_version],
-                latest_version=version,
-                is_private=True
-            )
-        else:
-            # Update an existing package
-            version_exists = False
-            for pkg_version in package.versions:
-                if pkg_version.version == version:
-                    # Update the existing version
-                    pkg_version.published = datetime.now()
-                    pkg_version.archive_url = archive_url
-                    pkg_version.archive_sha256 = sha256_hash
-                    version_exists = True
-                    break
+            # Calculate the SHA-256 hash of the file
+            sha256_hash = self._calculate_sha256(temp_file.name)
             
-            if not version_exists:
-                # Add a new version
+            # Upload the file to the storage
+            blob_name = f'{package_name}/{version}/archive.tar.gz'
+            self.storage_service.upload_file_to_blob(temp_file.name, blob_name)
+            
+            # Construct the archive URL
+            # We need to return a URL that points to the application's download endpoint
+            host = self.config.get('HOST', 'localhost')
+            if host == '0.0.0.0':
+                host = 'localhost'
+            port = self.config.get('PORT', 5000)
+            base_url = self.config.get('EXTERNAL_URL', f'http://{host}:{port}')
+            archive_url = f'{base_url}/api/packages/{package_name}/versions/{version}/archive.tar.gz'
+            
+            # Create or update the package information in the repository
+            package = self.package_repository.get_package(package_name)
+            
+            if not package:
+                # Create a new package
                 package_version = PackageVersion(
                     version=version,
                     published=datetime.now(),
                     archive_url=archive_url,
                     archive_sha256=sha256_hash
                 )
-                package.versions.append(package_version)
+                
+                package = Package(
+                    name=package_name,
+                    versions=[package_version],
+                    latest_version=version,
+                    is_private=True
+                )
+            else:
+                # Update an existing package
+                version_exists = False
+                for pkg_version in package.versions:
+                    if pkg_version.version == version:
+                        # Update the existing version
+                        pkg_version.published = datetime.now()
+                        pkg_version.archive_url = archive_url
+                        pkg_version.archive_sha256 = sha256_hash
+                        version_exists = True
+                        break
+                
+                if not version_exists:
+                    # Add a new version
+                    package_version = PackageVersion(
+                        version=version,
+                        published=datetime.now(),
+                        archive_url=archive_url,
+                        archive_sha256=sha256_hash
+                    )
+                    package.versions.append(package_version)
+                
+                # Update the latest version if the new version is greater
+                if self._compare_versions(version, package.latest_version) > 0:
+                    package.latest_version = version
             
-            # Update the latest version if the new version is greater
-            if self._compare_versions(version, package.latest_version) > 0:
-                package.latest_version = version
-        
-        # Save the package information to the repository
-        self.package_repository.save_package(package)
-        
-        # Clean up the temporary file
-        os.unlink(temp_file.name)
-        
-        return {
-            'success': True,
-            'package': package_name,
-            'version': version,
-            'archive_url': archive_url,
-            'archive_sha256': sha256_hash
-        }
+            # Save the package information to the repository
+            self.package_repository.save_package(package)
+            
+            return {
+                'success': True,
+                'package': package_name,
+                'version': version,
+                'archive_url': archive_url,
+                'archive_sha256': sha256_hash
+            }
+            
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
     
+    def _extract_metadata(self, tarball_path):
+        """
+        Extract package name and version from pubspec.yaml in the tarball.
+        
+        @param tarball_path: Path to the tarball file.
+        @return: Tuple (name, version).
+        @raise ValueError: If pubspec.yaml is missing or invalid.
+        """
+        try:
+            with tarfile.open(tarball_path, "r:gz") as tar:
+                # Find pubspec.yaml
+                pubspec_member = None
+                for member in tar.getmembers():
+                    if member.name.endswith('pubspec.yaml'):
+                        pubspec_member = member
+                        break
+                
+                if not pubspec_member:
+                    raise ValueError("pubspec.yaml not found in archive")
+                
+                f = tar.extractfile(pubspec_member)
+                content = f.read().decode('utf-8')
+                
+                name_match = re.search(r'^name:\s+(.+)$', content, re.MULTILINE)
+                version_match = re.search(r'^version:\s+(.+)$', content, re.MULTILINE)
+                
+                if not name_match or not version_match:
+                    raise ValueError("Could not parse name or version from pubspec.yaml")
+                    
+                return name_match.group(1).strip(), version_match.group(1).strip()
+                
+        except Exception as e:
+            raise ValueError(f"Failed to extract metadata: {str(e)}")
+
     def _calculate_sha256(self, file_path):
         """
         Calculate the SHA-256 hash of a file.

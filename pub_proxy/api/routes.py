@@ -1,10 +1,11 @@
-from flask import Blueprint, request, jsonify, send_file, Response, stream_with_context
-from injector import inject
+from flask import Blueprint, request, jsonify, send_file, Response, stream_with_context, url_for, redirect
+from injector import inject, Injector
 
 from pub_proxy.core.use_cases.proxy_package_use_case import ProxyPackageUseCase
 from pub_proxy.core.use_cases.upload_package_use_case import UploadPackageUseCase
 from pub_proxy.core.use_cases.download_package_use_case import DownloadPackageUseCase
 from pub_proxy.core.use_cases.list_packages_use_case import ListPackagesUseCase
+from pub_proxy.core.services.auth_service import AuthService
 
 """
 Routes module for the Pub Corp Repository API.
@@ -59,7 +60,7 @@ def register_routes(app):
     
     @api_bp.route('/api/packages/<package_name>', methods=['GET'])
     @inject
-    def get_package_info(package_name, proxy_use_case: ProxyPackageUseCase):
+    def get_package_info(package_name: str, proxy_use_case: ProxyPackageUseCase):
         """
         Get information about a package.
         
@@ -80,7 +81,7 @@ def register_routes(app):
     
     @api_bp.route('/api/packages/<package_name>/versions/<version>', methods=['GET'])
     @inject
-    def get_package_version(package_name, version, proxy_use_case: ProxyPackageUseCase):
+    def get_package_version(package_name: str, version: str, proxy_use_case: ProxyPackageUseCase):
         """
         Get information about a specific version of a package.
         
@@ -101,7 +102,8 @@ def register_routes(app):
             return jsonify({'error': str(e)}), 500
     
     @api_bp.route('/api/packages/<package_name>/versions/<version>/archive.tar.gz', methods=['GET'])
-    def download_package(package_name, version):
+    @inject
+    def download_package(package_name: str, version: str, download_use_case: DownloadPackageUseCase, auth_service: AuthService):
         """
         Download a package archive.
         
@@ -111,24 +113,86 @@ def register_routes(app):
         
         @param package_name: The name of the package.
         @param version: The version of the package.
+        @param download_use_case: The use case for downloading packages.
+        @param auth_service: The service for authentication.
         @return: The package archive file.
         """
+        # Check authentication
+        auth_header = request.headers.get('Authorization')
+        
+        # Debug logging
+        if not auth_header:
+            print(f"DEBUG: Missing Authorization header for download. Headers: {dict(request.headers)}")
+        elif not auth_header.startswith('Bearer '):
+            print(f"DEBUG: Invalid Authorization header format: {auth_header}")
+            
+        if not auth_header or not auth_header.startswith('Bearer '):
+            # Check if it's a browser request (optional, for now strict)
+            return jsonify({'error': 'Missing or invalid token'}), 401
+        
+        token = auth_header.split(' ')[1]
+        if not auth_service.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+
         try:
-            # Return a simple response for now
-            return jsonify({'message': 'Package download not implemented yet'}), 501
+            file_path_or_stream, is_stream = download_use_case.execute(package_name, version)
+            
+            if is_stream:
+                return Response(
+                    stream_with_context(file_path_or_stream),
+                    content_type='application/octet-stream'
+                )
+            else:
+                return send_file(file_path_or_stream, mimetype='application/octet-stream')
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @api_bp.route('/api/packages', methods=['POST'])
-    def upload_package():
+    @api_bp.route('/api/packages/versions/new', methods=['GET'])
+    @inject
+    def new_package_version(auth_service: AuthService):
         """
-        Upload a package to the repository.
+        Initiate the package upload process for dart pub publish.
         
-        This endpoint allows uploading a package archive to the repository.
-        The package will be stored in the GCP bucket and made available for download.
-        
-        @return: A JSON response with the result of the upload operation.
+        @param auth_service: The service for authentication.
+        @return: JSON with upload URL and fields.
         """
+        # Check authentication
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing or invalid token'}), 401
+        
+        token = auth_header.split(' ')[1]
+        if not auth_service.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+            
+        # Return the upload URL
+        # Note: _external=True is important to return the full URL
+        upload_url = url_for('api.upload_package_new', _external=True)
+        
+        return jsonify({
+            'url': upload_url,
+            'fields': {}
+        })
+
+    @api_bp.route('/api/packages/versions/newUpload', methods=['POST'])
+    @inject
+    def upload_package_new(upload_use_case: UploadPackageUseCase, auth_service: AuthService):
+        """
+        Handle the package upload for dart pub publish.
+        
+        @param upload_use_case: The use case for uploading packages.
+        @param auth_service: The service for authentication.
+        @return: Redirect to finish endpoint.
+        """
+        # Check authentication
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing or invalid token'}), 401
+        
+        token = auth_header.split(' ')[1]
+        if not auth_service.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+
         if 'file' not in request.files:
             return jsonify({'error': 'No file part'}), 400
         
@@ -136,68 +200,66 @@ def register_routes(app):
         if file.filename == '':
             return jsonify({'error': 'No selected file'}), 400
         
+        try:
+            # Execute upload (metadata extracted from tarball)
+            upload_use_case.execute(None, None, file)
+            
+            # Redirect to finish endpoint
+            finish_url = url_for('api.upload_package_finish', _external=True)
+            return redirect(finish_url)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @api_bp.route('/api/packages/versions/newUploadFinish', methods=['GET'])
+    def upload_package_finish():
+        """
+        Finalize the package upload process.
+        
+        @return: Success message.
+        """
+        return jsonify({'success': {'message': 'Successfully uploaded package.'}})
+
+    @api_bp.route('/api/packages', methods=['POST'])
+    @inject
+    def upload_package(upload_use_case: UploadPackageUseCase, auth_service: AuthService):
+        """
+        Upload a package to the repository (legacy/manual endpoint).
+        
+        This endpoint allows uploading a package archive to the repository.
+        The package will be stored in the GCP bucket and made available for download.
+        
+        @param upload_use_case: The use case for uploading packages.
+        @param auth_service: The service for authentication.
+        @return: A JSON response with the result of the upload operation.
+        """
+        # Check authentication
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing or invalid token'}), 401
+        
+        token = auth_header.split(' ')[1]
+        if not auth_service.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+            
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+        
+        # Optional form fields (if not provided, extracted from tarball)
         package_name = request.form.get('package_name')
         version = request.form.get('version')
         
-        if not package_name or not version:
-            return jsonify({'error': 'Package name and version are required'}), 400
-        
         try:
-            # Return a simple response for now
-            return jsonify({'message': 'Package upload not implemented yet'}), 501
+            result = upload_use_case.execute(package_name, version, file)
+            return jsonify(result), 201
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
     # Register the blueprint with the application
     app.register_blueprint(api_bp)
-    
-    # Add routes for Flutter pub client
-    @app.route('/packages/<package_name>', methods=['GET'])
-    def get_package(package_name):
-        """
-        Get package information for Flutter pub client.
-        
-        This endpoint proxies requests to pub.dev for the Flutter pub client.
-        
-        @param package_name: The name of the package.
-        @return: The response from pub.dev.
-        """
-        try:
-            import requests
-            from flask import Response, stream_with_context
-            
-            # Default pub.dev URL
-            pub_dev_url = "https://pub.dev"
-            
-            # Construct the full URL
-            url = f"{pub_dev_url}/packages/{package_name}"
-            
-            # Forward the request to pub.dev
-            resp = requests.request(
-                method=request.method,
-                url=url,
-                headers={key: value for key, value in request.headers if key != 'Host'},
-                data=request.get_data(),
-                cookies=request.cookies,
-                allow_redirects=False,
-                stream=True
-            )
-            
-            # Create a Flask response from the pub.dev response
-            response = Response(
-                stream_with_context(resp.iter_content(chunk_size=1024)),
-                status=resp.status_code,
-                content_type=resp.headers.get('Content-Type', 'text/plain')
-            )
-            
-            # Copy headers from the pub.dev response
-            for key, value in resp.headers.items():
-                if key.lower() not in ('content-encoding', 'content-length', 'transfer-encoding', 'connection'):
-                    response.headers[key] = value
-                    
-            return response
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
             
     @app.route('/api/packages/<package_name>', methods=['GET'])
     def get_package_api(package_name):
@@ -295,53 +357,7 @@ def register_routes(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
             
-    @app.route('/api/packages/<package_name>/versions/<version>/archive.tar.gz', methods=['GET'])
-    def download_package_archive(package_name, version):
-        """
-        Download a package archive for Flutter pub client.
-        
-        This endpoint proxies requests to pub.dev for downloading package archives.
-        
-        @param package_name: The name of the package.
-        @param version: The version of the package.
-        @return: The package archive file.
-        """
-        try:
-            import requests
-            from flask import Response, stream_with_context
-            
-            # Default pub.dev URL
-            pub_dev_url = "https://pub.dev"
-            
-            # Construct the full URL
-            url = f"{pub_dev_url}/api/packages/{package_name}/versions/{version}/archive.tar.gz"
-            
-            # Forward the request to pub.dev
-            resp = requests.request(
-                method=request.method,
-                url=url,
-                headers={key: value for key, value in request.headers if key != 'Host'},
-                data=request.get_data(),
-                cookies=request.cookies,
-                allow_redirects=False,
-                stream=True
-            )
-            
-            # Create a Flask response from the pub.dev response
-            response = Response(
-                stream_with_context(resp.iter_content(chunk_size=1024)),
-                status=resp.status_code,
-                content_type='application/octet-stream'
-            )
-            
-            # Copy headers from the pub.dev response
-            for key, value in resp.headers.items():
-                if key.lower() not in ('content-encoding', 'content-length', 'transfer-encoding', 'connection'):
-                    response.headers[key] = value
-                    
-            return response
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+
             
     # Add a catch-all route to proxy all other requests to pub.dev
     @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])

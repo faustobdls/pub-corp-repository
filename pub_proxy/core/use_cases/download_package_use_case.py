@@ -5,6 +5,8 @@ from injector import inject
 from pub_proxy.infrastructure.services.pub_dev_service import PubDevService
 from pub_proxy.infrastructure.repositories.package_repository import PackageRepository
 from pub_proxy.core.interfaces.storage_service_interface import StorageServiceInterface
+from pub_proxy.core.entities.package import Package, PackageVersion
+from pub_proxy.core.app_config import AppConfig
 
 """
 Download Package Use Case module.
@@ -39,7 +41,8 @@ class DownloadPackageUseCase:
         self,
         storage_service: StorageServiceInterface,
         pub_dev_service: PubDevService,
-        package_repository: PackageRepository
+        package_repository: PackageRepository,
+        config: AppConfig
     ):
         """
         Initialize the use case with its dependencies.
@@ -47,10 +50,12 @@ class DownloadPackageUseCase:
         @param storage_service: The service for interacting with storage (GCP or local).
         @param pub_dev_service: The service for interacting with pub.dev.
         @param package_repository: The repository for storing package information.
+        @param config: The application configuration.
         """
         self.storage_service = storage_service
         self.pub_dev_service = pub_dev_service
         self.package_repository = package_repository
+        self.config = config
     
     def execute(self, package_name, version):
         """
@@ -107,7 +112,15 @@ class DownloadPackageUseCase:
         if package:
             for pkg_version in package.versions:
                 if pkg_version.version == version:
-                    pkg_version.archive_url = self.storage_service.get_blob_url(blob_name)
+                    # Construct the archive URL
+                    host = self.config.get('HOST', 'localhost')
+                    if host == '0.0.0.0':
+                        host = 'localhost'
+                    port = self.config.get('PORT', 5000)
+                    base_url = self.config.get('EXTERNAL_URL', f'http://{host}:{port}')
+                    archive_url = f'{base_url}/api/packages/{package_name}/versions/{version}/archive.tar.gz'
+                    
+                    pkg_version.archive_url = archive_url
                     self.package_repository.save_package(package)
                     break
         

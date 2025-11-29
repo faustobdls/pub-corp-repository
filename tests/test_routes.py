@@ -4,7 +4,14 @@ from unittest.mock import Mock, patch, MagicMock
 from flask import Flask
 from io import BytesIO
 
+from flask_injector import FlaskInjector
+from injector import Injector, singleton
 from pub_proxy.api.routes import register_routes
+from pub_proxy.core.use_cases.list_packages_use_case import ListPackagesUseCase
+from pub_proxy.core.use_cases.proxy_package_use_case import ProxyPackageUseCase
+from pub_proxy.core.use_cases.upload_package_use_case import UploadPackageUseCase
+from pub_proxy.core.use_cases.download_package_use_case import DownloadPackageUseCase
+from pub_proxy.core.services.auth_service import AuthService
 
 
 class TestRoutes:
@@ -19,6 +26,27 @@ class TestRoutes:
         # Register routes
         register_routes(app)
         
+        # Create mocks
+        self.mock_list_use_case = MagicMock(spec=ListPackagesUseCase)
+        self.mock_proxy_use_case = MagicMock(spec=ProxyPackageUseCase)
+        self.mock_upload_use_case = MagicMock(spec=UploadPackageUseCase)
+        self.mock_download_use_case = MagicMock(spec=DownloadPackageUseCase)
+        self.mock_auth_service = MagicMock(spec=AuthService)
+        
+        # Default auth service to return True
+        self.mock_auth_service.validate_token.return_value = True
+        
+        # Configure injection
+        def configure(binder):
+            binder.bind(ListPackagesUseCase, to=self.mock_list_use_case, scope=singleton)
+            binder.bind(ProxyPackageUseCase, to=self.mock_proxy_use_case, scope=singleton)
+            binder.bind(UploadPackageUseCase, to=self.mock_upload_use_case, scope=singleton)
+            binder.bind(DownloadPackageUseCase, to=self.mock_download_use_case, scope=singleton)
+            binder.bind(AuthService, to=self.mock_auth_service, scope=singleton)
+            
+        injector = Injector([configure])
+        FlaskInjector(app=app, injector=injector)
+        
         return app
     
     @pytest.fixture
@@ -29,18 +57,22 @@ class TestRoutes:
     # Note: Tests for endpoints with @inject decorator are skipped
     # as they require proper dependency injection setup
     
-    def test_download_package_not_implemented(self, client):
-        """Test package download endpoint (not implemented)."""
-        response = client.get('/api/packages/test_package/versions/1.0.0/archive.tar.gz')
+    def test_download_package_success(self, client):
+        """Test package download endpoint success."""
+        # Mock use case response
+        self.mock_download_use_case.execute.return_value = (BytesIO(b'archive content'), True)
         
-        assert response.status_code == 501
-        data = json.loads(response.data)
-        assert 'message' in data
-        assert 'not implemented' in data['message'].lower()
+        headers = {'Authorization': 'Bearer test-token'}
+        response = client.get('/api/packages/test_package/versions/1.0.0/archive.tar.gz', headers=headers)
+        
+        assert response.status_code == 200
+        assert response.data == b'archive content'
+        self.mock_download_use_case.execute.assert_called_with('test_package', '1.0.0')
     
     def test_upload_package_no_file(self, client):
         """Test package upload without file."""
-        response = client.post('/api/packages')
+        headers = {'Authorization': 'Bearer test-token'}
+        response = client.post('/api/packages', headers=headers)
         
         assert response.status_code == 400
         data = json.loads(response.data)
@@ -50,7 +82,8 @@ class TestRoutes:
     def test_upload_package_empty_filename(self, client):
         """Test package upload with empty filename."""
         data = {'file': (BytesIO(b''), '')}
-        response = client.post('/api/packages', data=data)
+        headers = {'Authorization': 'Bearer test-token'}
+        response = client.post('/api/packages', data=data, headers=headers)
         
         assert response.status_code == 400
         data = json.loads(response.data)
@@ -58,17 +91,27 @@ class TestRoutes:
         assert 'No selected file' in data['error']
     
     def test_upload_package_missing_params(self, client):
-        """Test package upload with missing package name and version."""
+        """Test package upload with missing package name and version (should rely on extraction)."""
         data = {
             'file': (BytesIO(b'test content'), 'test.tar.gz')
         }
+        headers = {'Authorization': 'Bearer test-token'}
         
-        response = client.post('/api/packages', data=data)
+        # Mock use case return
+        self.mock_upload_use_case.execute.return_value = {
+            'success': True,
+            'package': 'extracted_name',
+            'version': '1.0.0'
+        }
         
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert 'Package name and version are required' in data['error']
+        response = client.post('/api/packages', data=data, headers=headers)
+        
+        assert response.status_code == 201
+        self.mock_upload_use_case.execute.assert_called()
+        # Verify called with None for name/version
+        call_args = self.mock_upload_use_case.execute.call_args
+        assert call_args[0][0] is None  # package_name
+        assert call_args[0][1] is None  # version
     
     # Removed test_list_packages_endpoint_exists due to dependency injection requirements
         
@@ -79,14 +122,27 @@ class TestRoutes:
             'package_name': 'test_package',
             'version': '1.0.0'
         }
+        headers = {'Authorization': 'Bearer test-token'}
         
-        response = client.post('/api/packages', data=data)
+        # Mock use case return
+        self.mock_upload_use_case.execute.return_value = {
+            'success': True,
+            'package': 'test_package',
+            'version': '1.0.0'
+        }
         
-        # Should return 501 (not implemented) since upload is not fully implemented
-        assert response.status_code == 501
+        response = client.post('/api/packages', data=data, headers=headers)
+        
+        # Should return 201 created
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        assert data['success'] is True
         
     def test_upload_package_different_file_types(self, client):
         """Test package upload with different file types."""
+        headers = {'Authorization': 'Bearer test-token'}
+        self.mock_upload_use_case.execute.return_value = {'success': True}
+        
         # Test with .zip file
         data = {
             'file': (BytesIO(b'zip content'), 'test.zip'),
@@ -94,8 +150,8 @@ class TestRoutes:
             'version': '1.0.0'
         }
         
-        response = client.post('/api/packages', data=data)
-        assert response.status_code == 501
+        response = client.post('/api/packages', data=data, headers=headers)
+        assert response.status_code == 201
         
         # Test with .tar file
         data = {
@@ -104,8 +160,8 @@ class TestRoutes:
             'version': '2.0.0'
         }
         
-        response = client.post('/api/packages', data=data)
-        assert response.status_code == 501
+        response = client.post('/api/packages', data=data, headers=headers)
+        assert response.status_code == 201
     
     # Removed exception handling tests due to complexity in mocking Flask request context
     
@@ -184,48 +240,33 @@ class TestRoutes:
         assert response.status_code == 204
         mock_request.assert_called_once()
     
-    def test_upload_package_not_implemented(self, client):
-        """Test package upload endpoint (not implemented)."""
-        data = {
-            'file': (BytesIO(b'test content'), 'test.tar.gz'),
-            'package_name': 'test_package',
-            'version': '1.0.0'
-        }
-        response = client.post('/api/packages', data=data)
-        
-        assert response.status_code == 501
-        data = json.loads(response.data)
-        assert 'message' in data
-        assert 'not implemented' in data['message'].lower()
+
     
-    @patch('requests.request')
-    def test_get_package_proxy_success(self, mock_request, client):
-        """Test successful package proxy request."""
-        # Mock the requests response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {'Content-Type': 'application/json'}
-        mock_response.iter_content.return_value = [b'{"name": "test_package"}']
-        mock_request.return_value = mock_response
+    @patch('pub_proxy.api.routes.render_template')
+    def test_get_package_success(self, mock_render_template, client):
+        """Test successful package page rendering."""
+        # Mock use case response
+        package_info = {'name': 'test_package', 'latest': {'version': '1.0.0'}}
+        self.mock_proxy_use_case.get_package_info.return_value = package_info
+        mock_render_template.return_value = 'rendered template'
         
         response = client.get('/packages/test_package')
         
         assert response.status_code == 200
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
-        assert 'https://pub.dev/packages/test_package' in call_args[1]['url']
+        assert response.data == b'rendered template'
+        self.mock_proxy_use_case.get_package_info.assert_called_with('test_package')
+        mock_render_template.assert_called_with('package.html', package=package_info)
     
-    @patch('requests.request')
-    def test_get_package_proxy_error(self, mock_request, client):
-        """Test package proxy request with error."""
-        mock_request.side_effect = Exception('Connection error')
+    def test_get_package_error(self, client):
+        """Test package page rendering with error."""
+        self.mock_proxy_use_case.get_package_info.side_effect = Exception('Package not found')
         
         response = client.get('/packages/test_package')
         
         assert response.status_code == 500
         data = json.loads(response.data)
         assert 'error' in data
-        assert 'Connection error' in data['error']
+        assert 'Package not found' in data['error']
     
     # Note: API proxy tests are skipped as they conflict with @inject decorated endpoints
     
@@ -277,230 +318,70 @@ class TestRoutes:
         assert 'Network error' in data['error']
     
     # Note: API routes with @inject decorator are skipped due to dependency injection requirements
+    # (Actually they are tested above with mocks)
     
-    def test_download_package_archive_not_implemented(self, client):
-        """Test download package archive route (not implemented)."""
-        response = client.get('/api/packages/test_package/versions/1.0.0/archive.tar.gz')
+    @patch('pub_proxy.api.routes.render_template')
+    def test_index_success(self, mock_render_template, client):
+        """Test index page rendering."""
+        # Mock use case
+        packages = [{'name': 'pkg1'}]
+        self.mock_list_use_case.execute.return_value = packages
+        mock_render_template.return_value = 'index page'
         
-        assert response.status_code == 501
-        data = json.loads(response.data)
-        assert 'message' in data
-        assert 'not implemented' in data['message'].lower()
-    
-    @patch('requests.request')
-    def test_proxy_with_headers_filtering(self, mock_request, client):
-        """Test proxy routes filter headers correctly."""
-        # Mock successful response with various headers
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {
-            'Content-Type': 'application/json',
-            'Content-Encoding': 'gzip',  # Should be filtered
-            'Content-Length': '100',     # Should be filtered
-            'Transfer-Encoding': 'chunked',  # Should be filtered
-            'Connection': 'keep-alive',  # Should be filtered
-            'Custom-Header': 'value'     # Should be kept
-        }
-        mock_response.iter_content.return_value = [b'data']
-        mock_request.return_value = mock_response
-        
-        response = client.get('/packages/test_package')
+        response = client.get('/')
         
         assert response.status_code == 200
-        # Check that filtered headers are not present
-        assert 'Content-Encoding' not in response.headers
-        assert 'Content-Length' not in response.headers
-        assert 'Transfer-Encoding' not in response.headers
-        assert 'Connection' not in response.headers
-        # Content-Type should be set from the response or default
-        assert 'Content-Type' in response.headers
-        mock_request.assert_called_once()
-    
-    # Note: Skipping tests for /api/packages/<name> and /api/packages/<name>/versions/<version>
-    # as they use @inject decorator and require dependency injection setup
-    
-    @patch('requests.request')
-    def test_catch_all_proxy_success(self, mock_request, client):
-        """Test catch-all proxy route success."""
-        # Mock successful response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {'Content-Type': 'text/html'}
-        mock_response.iter_content.return_value = [b'<html>content</html>']
-        mock_request.return_value = mock_response
+        assert response.data == b'index page'
+        mock_render_template.assert_called_with('index.html', packages=packages, query='')
         
-        response = client.get('/some/random/path')
+    def test_upload_package_unauthorized(self, client):
+        """Test upload package without token."""
+        # Mock auth service to return False
+        self.mock_auth_service.validate_token.return_value = False
         
-        assert response.status_code == 200
-        mock_request.assert_called_once()
-        # Verify the correct URL was called
-        args, kwargs = mock_request.call_args
-        assert 'https://pub.dev/some/random/path' in kwargs['url']
-    
-    @patch('requests.request')
-    def test_catch_all_proxy_error(self, mock_request, client):
-        """Test catch-all proxy route with error."""
-        # Mock requests to raise an exception
-        mock_request.side_effect = Exception('Proxy error')
+        headers = {'Authorization': 'Bearer invalid-token'}
+        response = client.post('/api/packages', headers=headers)
         
-        response = client.get('/some/random/path')
+        assert response.status_code == 401
         
-        assert response.status_code == 500
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert 'Proxy error' in data['error']
-    
-    @patch('requests.request')
-    def test_get_package_proxy_error(self, mock_request, client):
-        """Test get package proxy route with error."""
-        # Mock requests to raise an exception
-        mock_request.side_effect = Exception('Package proxy error')
-        
-        response = client.get('/packages/test_package')
-        
-        assert response.status_code == 500
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert 'Package proxy error' in data['error']
-    
-    # Tests for direct proxy routes (without @inject)
-    
-    @patch('requests.request')
-    def test_get_package_direct_proxy_success(self, mock_request, client):
-        """Test direct package proxy route success."""
-        # Mock successful response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {'Content-Type': 'text/html'}
-        mock_response.iter_content.return_value = [b'package content']
-        mock_request.return_value = mock_response
-        
-        response = client.get('/packages/test_package')
-        
-        assert response.status_code == 200
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
-        assert 'https://pub.dev/packages/test_package' in call_args[1]['url']
-    
-    @patch('requests.request')
-    def test_get_package_direct_proxy_error(self, mock_request, client):
-        """Test direct package proxy route error."""
-        # Mock requests to raise an exception
-        mock_request.side_effect = Exception('Direct proxy error')
-        
-        response = client.get('/packages/test_package')
-        
-        assert response.status_code == 500
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert 'Direct proxy error' in data['error']
-    
-    # Note: Skipping tests for /api/packages/<name> and /api/packages/<name>/versions/<version> 
-    # routes as they use @inject decorator and require dependency injection setup
-    
-    def test_download_package_archive_not_implemented(self, client):
-        """Test download package archive route returns 501 not implemented."""
-        response = client.get('/api/packages/test_package/versions/1.0.0/archive.tar.gz')
-        
-        assert response.status_code == 501
-        data = json.loads(response.data)
-        assert 'error' in data or 'message' in data
-        assert 'not implemented yet' in (data.get('error', '') + data.get('message', ''))
-    
-    @patch('requests.request')
-    def test_catch_all_proxy_different_methods(self, mock_request, client):
-        """Test catch-all proxy route with different HTTP methods."""
-        # Mock successful response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {'Content-Type': 'text/plain'}
-        mock_response.iter_content.return_value = [b'response content']
-        mock_request.return_value = mock_response
-        
-        # Test GET
-        response = client.get('/some/path')
-        assert response.status_code == 200
-        
-        # Test POST
-        response = client.post('/some/path', data={'key': 'value'})
-        assert response.status_code == 200
-        
-        # Test PUT
-        response = client.put('/some/path', data={'key': 'value'})
-        assert response.status_code == 200
-        
-        # Test DELETE
-        response = client.delete('/some/path')
-        assert response.status_code == 200
-        
-        # Verify all calls were made
-        assert mock_request.call_count == 4
-    
-    @patch('requests.request')
-    def test_proxy_headers_filtering(self, mock_request, client):
-        """Test that proxy routes filter headers correctly."""
-        # Mock successful response with various headers
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {
-            'Content-Type': 'application/json',
-            'Content-Encoding': 'gzip',  # Should be filtered
-            'Content-Length': '100',     # Should be filtered
-            'Transfer-Encoding': 'chunked',  # Should be filtered
-            'Connection': 'keep-alive',  # Should be filtered
-            'Custom-Header': 'value'     # Should be kept
-        }
-        mock_response.iter_content.return_value = [b'content']
-        mock_request.return_value = mock_response
-        
-        response = client.get('/some/path')
-        
-        assert response.status_code == 200
-        assert 'Custom-Header' in response.headers
-        assert 'Content-Encoding' not in response.headers
-        assert 'Content-Length' not in response.headers
-        assert 'Transfer-Encoding' not in response.headers
-        assert 'Connection' not in response.headers
-    
-    def test_upload_package_not_implemented(self, client):
-        """Test upload_package route returns 501 not implemented."""
+    def test_upload_package_missing_token(self, client):
+        """Test upload package without auth header."""
         response = client.post('/api/packages')
         
-        assert response.status_code == 400  # No file part error
+        assert response.status_code == 401
+        
+    def test_new_package_version_success(self, client):
+        """Test initiating new package upload."""
+        headers = {'Authorization': 'Bearer test-token'}
+        response = client.get('/api/packages/versions/new', headers=headers)
+        
+        assert response.status_code == 200
         data = json.loads(response.data)
-        assert 'error' in data
-        assert 'No file part' in data['error']
-    
-    def test_upload_package_not_implemented_with_file(self, client):
-        """Test upload_package route with file returns 501 not implemented."""
-        from io import BytesIO
+        assert 'url' in data
+        assert 'fields' in data
+        assert 'newUpload' in data['url']
+
+    def test_upload_package_new_success(self, client):
+        """Test new package upload endpoint."""
+        data = {
+            'file': (BytesIO(b'test content'), 'test.tar.gz')
+        }
+        headers = {'Authorization': 'Bearer test-token'}
         
-        response = client.post('/api/packages', 
-                             data={
-                                 'file': (BytesIO(b'test content'), 'test.tar.gz'),
-                                 'package_name': 'test_package',
-                                 'version': '1.0.0'
-                             },
-                             content_type='multipart/form-data')
+        # Mock use case return
+        self.mock_upload_use_case.execute.return_value = {'success': True}
         
-        assert response.status_code == 501
+        response = client.post('/api/packages/versions/newUpload', data=data, headers=headers)
+        
+        assert response.status_code == 302  # Redirect
+        assert 'Location' in response.headers
+        assert 'newUploadFinish' in response.headers['Location']
+        
+    def test_upload_package_finish_success(self, client):
+        """Test upload finish endpoint."""
+        response = client.get('/api/packages/versions/newUploadFinish')
+        
+        assert response.status_code == 200
         data = json.loads(response.data)
-        assert 'error' in data or 'message' in data
-        assert 'not implemented yet' in (data.get('error', '') + data.get('message', ''))
-    
-    def test_upload_package_missing_params(self, client):
-        """Test upload_package route with missing parameters."""
-        from io import BytesIO
-        
-        response = client.post('/api/packages', 
-                             data={
-                                 'file': (BytesIO(b'test content'), 'test.tar.gz')
-                             },
-                             content_type='multipart/form-data')
-        
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert 'Package name and version are required' in data['error']
-    
-    # Note: Skipping error tests for @inject routes as they require dependency injection
+        assert 'success' in data
+        assert 'message' in data['success']

@@ -5,6 +5,7 @@ from pathlib import Path
 from injector import inject
 
 from pub_proxy.core.interfaces.storage_service_interface import StorageServiceInterface
+from pub_proxy.core.app_config import AppConfig
 
 """
 Local Storage Service module.
@@ -41,7 +42,7 @@ class LocalStorageService(StorageServiceInterface):
     """
     
     @inject
-    def __init__(self, config: dict):
+    def __init__(self, config: AppConfig):
         """
         Initialize the service with its dependencies.
         

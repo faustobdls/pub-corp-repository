@@ -1,173 +1,153 @@
-# Como usar o Pub Corp Repository
+# Pub Corp Repository - Guia de Uso
 
-Este documento explica como configurar e usar o Pub Corp Repository como proxy para o pub.dev em seus projetos Dart/Flutter. O Pub Corp Repository suporta dois modos de armazenamento: GCP (Google Cloud Platform) e local (sistema de arquivos local).
+Este guia explica como configurar o servidor, preparar o ambiente de desenvolvimento e utilizar o repositório privado.
 
-## Configuração do ambiente
+## 🚀 Configuração do Servidor
 
-### 1. Escolher o modo de armazenamento
+### 1. Pré-requisitos
+- Python 3.11+
+- Pip
+- Virtualenv (recomendado)
 
-O Pub Corp Repository suporta dois modos de armazenamento:
+### 2. Instalação
 
-#### Modo de armazenamento local (padrão)
+1. Clone o repositório e entre na pasta:
+   ```bash
+   git clone <url-do-repo>
+   cd pub-corp-repository
+   ```
 
-Este modo usa o sistema de arquivos local para armazenar pacotes. É ideal para testes e desenvolvimento, não requerendo configurações adicionais de serviços externos.
+2. Crie e ative um ambiente virtual:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   # ou
+   venv\Scripts\activate     # Windows
+   ```
 
-#### Modo de armazenamento GCP
+3. Instale as dependências:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Este modo usa o Google Cloud Platform (GCP) para armazenar pacotes. É recomendado para ambientes de produção.
+### 3. Configuração (.env)
 
-Para usar o modo GCP, você precisa configurar as credenciais do GCP. Existem duas maneiras de fazer isso:
+Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
 
-##### Usando um arquivo de credenciais
+```env
+# Configuração do Servidor
+HOST=0.0.0.0
+PORT=5002
+DEBUG=True
 
-1. Baixe o arquivo de credenciais JSON do seu projeto GCP.
-2. Defina a variável de ambiente `GOOGLE_APPLICATION_CREDENTIALS` para apontar para o arquivo de credenciais:
+# Autenticação (Token para publicar e baixar pacotes privados)
+AUTH_TOKEN=seu-token-secreto-aqui
 
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/caminho/para/seu-arquivo-de-credenciais.json"
+# Armazenamento (local ou gcp)
+STORAGE_TYPE=local
+LOCAL_STORAGE_DIR=./storage
+
+# Configuração GCP (apenas se STORAGE_TYPE=gcp)
+# GCP_PROJECT_ID=seu-projeto-id
+# GCP_BUCKET_NAME=seu-bucket-nome
 ```
 
-##### Usando o Google Cloud SDK
-
-1. Instale o [Google Cloud SDK](https://cloud.google.com/sdk/docs/install).
-2. Autentique-se usando o comando:
-
-```bash
-gcloud auth application-default login
-```
-
-### 2. Configurar as variáveis de ambiente
-
-Crie um arquivo `.env` baseado no arquivo `.env.example` e preencha as variáveis de ambiente necessárias:
-
-```bash
-cp .env.example .env
-```
-
-Edite o arquivo `.env` e defina as seguintes variáveis:
-
-- `STORAGE_TYPE`: O tipo de armazenamento a ser usado (`local` ou `gcp`). O padrão é `local`.
-
-Para o modo de armazenamento local:
-- `LOCAL_STORAGE_DIR`: O diretório onde os pacotes serão armazenados. O padrão é `./storage`.
-
-Para o modo de armazenamento GCP:
-- `GCP_BUCKET_NAME`: O nome do bucket GCP para armazenar os pacotes.
-- `GCP_PROJECT_ID`: O ID do seu projeto GCP.
-
-Configuração do servidor:
-- `HOST`: O endereço IP onde o servidor será executado. O padrão é `0.0.0.0` (todas as interfaces de rede).
-- `PORT`: A porta onde o servidor será executado. O padrão é `5000`.
-
-## Executando o Pub Corp Repository
-
-### Usando Docker
-
-A maneira mais fácil de executar o Pub Corp Repository é usando Docker:
-
-```bash
-docker-compose up
-```
-
-Isso iniciará o servidor na porta configurada (padrão: 5000). Se você alterou a porta no arquivo `.env`, certifique-se de atualizar o arquivo `docker-compose.yml` para mapear a porta correta.
-
-### Executando localmente
-
-Se preferir executar localmente sem Docker:
-
-1. Crie e ative um ambiente virtual:
-
-```bash
-python -m venv venv
-source venv/bin/activate  # No Windows: venv\Scripts\activate
-```
-
-2. Instale as dependências:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Execute a aplicação:
+### 4. Executando o Servidor
 
 ```bash
 python run.py
 ```
+O servidor iniciará em `http://localhost:5002` (ou na porta configurada).
 
-## Usando o Pub Corp Repository com o pub CLI
+---
 
-Para usar o Pub Corp Repository como proxy para o pub.dev, você precisa configurar a variável de ambiente `PUB_HOSTED_URL` para apontar para o seu servidor:
+## 💻 Configuração da Máquina do Desenvolvedor
 
+Para que o `dart` ou `flutter` utilizem este repositório privado, siga os passos abaixo.
+
+### 1. Configurar a URL do Repositório
+
+Defina a variável de ambiente `PUB_HOSTED_URL` para apontar para o seu servidor.
+
+**Temporário (apenas para o terminal atual):**
 ```bash
-export PUB_HOSTED_URL="http://localhost:${PORT:-5000}"
+export PUB_HOSTED_URL=http://localhost:5002
 ```
 
-Substitua `${PORT:-5000}` pela porta que você configurou no arquivo `.env` (ou use 5000 se não tiver alterado).
-
-Agora, quando você executar comandos como `flutter pub get` ou `dart pub get`, o pub CLI usará o seu proxy em vez do pub.dev oficial.
-
-### Configuração permanente
-
-Para configurar permanentemente o proxy, você pode adicionar a variável de ambiente ao seu arquivo de perfil (`.bashrc`, `.zshrc`, etc.):
-
+**Permanente (Linux/Mac - Bash/Zsh):**
+Adicione ao seu `~/.bashrc` ou `~/.zshrc`:
 ```bash
-echo 'export PUB_HOSTED_URL="http://localhost:PORTA"' >> ~/.bashrc
-source ~/.bashrc
+export PUB_HOSTED_URL=http://localhost:5002
 ```
 
-Substitua `PORTA` pela porta que você configurou no arquivo `.env` (ou use 5000 se não tiver alterado).
+### 2. Configurar Autenticação
 
-## Publicando pacotes privados
+Para baixar ou publicar pacotes privados, você precisa autenticar o cliente Dart com o servidor.
 
-Para publicar um pacote privado no Pub Corp Repository:
-
-1. Crie um arquivo `.tar.gz` do seu pacote:
+Execute o comando abaixo, substituindo `seu-token-secreto-aqui` pelo valor definido no `.env` do servidor:
 
 ```bash
-cd seu_pacote
-tar -czf ../seu_pacote-1.0.0.tar.gz .
+dart pub token add http://localhost:5002 --env-var PUB_HOSTED_URL
 ```
+*Nota: O comando acima pode pedir para você colar o token manualmente.*
 
-2. Envie o pacote para o Pub Corp Repository:
+Alternativamente, você pode configurar manualmente editando o arquivo de tokens do pub (geralmente em `~/.pub-cache/credentials.json` ou similar, mas o comando `token add` é o método recomendado).
+
+---
+
+## 📦 Publicando Pacotes
+
+### Método Padrão (Dart Pub Publish)
+
+1. No `pubspec.yaml` do seu pacote, adicione a configuração de publicação (opcional se `PUB_HOSTED_URL` estiver setado, mas recomendado para clareza):
+   ```yaml
+   publish_to: 'http://localhost:5002'
+   ```
+
+2. Publique o pacote:
+   ```bash
+   dart pub publish
+   ```
+
+### Método Manual (cURL)
+
+Você também pode fazer upload manual de um arquivo `.tar.gz`:
 
 ```bash
-curl -X POST -F "file=@../seu_pacote-1.0.0.tar.gz" -F "package_name=seu_pacote" -F "version=1.0.0" http://localhost:PORTA/api/packages
+curl -X POST \
+  -H "Authorization: Bearer seu-token-secreto-aqui" \
+  -F "file=@pacote-1.0.0.tar.gz" \
+  http://localhost:5002/api/packages
 ```
 
-Substitua `PORTA` pela porta que você configurou no arquivo `.env` (ou use 5000 se não tiver alterado).
+---
 
-## Solução de problemas
+## 📥 Baixando Pacotes
 
-### Problemas com o modo de armazenamento
+Basta adicionar o pacote ao seu `pubspec.yaml`. Se o pacote existir no repositório privado, ele será baixado de lá. Caso contrário, o servidor fará proxy para o `pub.dev`.
 
-#### Modo local
+```yaml
+dependencies:
+  meu_pacote_privado: ^1.0.0
+  http: ^1.0.0  # Será buscado no pub.dev via proxy
+```
 
-Se você encontrar problemas com o modo de armazenamento local, verifique se:
+Execute:
+```bash
+flutter pub get
+```
 
-1. O diretório especificado em `LOCAL_STORAGE_DIR` existe e tem permissões de escrita.
-2. Há espaço suficiente em disco para armazenar os pacotes.
+---
 
-#### Modo GCP
+## 🛠 Solução de Problemas
 
-Se você encontrar erros relacionados à autenticação do GCP, verifique se:
+**Erro: `Invalid token`**
+- Verifique se o token configurado na máquina do desenvolvedor coincide com o `AUTH_TOKEN` no `.env` do servidor.
+- Tente remover e adicionar o token novamente: `dart pub token remove http://localhost:5002` e depois `add`.
 
-1. O arquivo de credenciais está correto e acessível.
-2. As permissões do bucket estão configuradas corretamente.
-3. A variável de ambiente `GOOGLE_APPLICATION_CREDENTIALS` está definida corretamente.
+**Erro: `Injecting Any is not supported`**
+- Certifique-se de que está rodando a versão mais recente do código do servidor, onde as injeções de dependência foram corrigidas.
 
-### Problemas com o pub CLI
-
-Se o pub CLI não estiver usando o proxy:
-
-1. Verifique se a variável de ambiente `PUB_HOSTED_URL` está definida corretamente e aponta para o host e porta corretos.
-2. Reinicie o terminal após definir a variável de ambiente.
-3. Verifique se o servidor Pub Corp Repository está em execução.
-
-### Problemas com a configuração do servidor
-
-Se você estiver tendo problemas para acessar o servidor:
-
-1. Verifique se as variáveis `HOST` e `PORT` estão configuradas corretamente no arquivo `.env`.
-2. Certifique-se de que a porta configurada não está sendo usada por outro serviço.
-3. Se você estiver usando Docker, verifique se o mapeamento de portas no arquivo `docker-compose.yml` corresponde à porta configurada no arquivo `.env`.
-4. Se você alterou o host para um endereço específico (diferente de 0.0.0.0), certifique-se de que esse endereço é acessível a partir de onde você está tentando se conectar.
+**Erro: `Connection refused`**
+- Verifique se o servidor está rodando (`python run.py`).
+- Verifique se a porta no `PUB_HOSTED_URL` está correta.

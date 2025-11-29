@@ -64,9 +64,19 @@ class ListPackagesUseCase:
         # Add pub.dev packages that are not in the repository
         private_package_names = {p['name'] for p in private_packages}
         if pub_dev_packages is not None:
-            for package in pub_dev_packages.get('packages', []):
-                if package['name'] not in private_package_names:
-                    packages.append(package)
+            for package_data in pub_dev_packages.get('packages', []):
+                # Pub.dev search API returns {'package': 'name'}
+                pkg_name = package_data.get('package')
+                if pkg_name and pkg_name not in private_package_names:
+                    # Convert to the format expected by the template
+                    packages.append({
+                        'name': pkg_name,
+                        'latest_version': 'latest',  # Search API doesn't return version
+                        'description': 'Package from pub.dev',  # Search API doesn't return description
+                        'is_private': False,
+                        'homepage': f'https://pub.dev/packages/{pkg_name}',
+                        'repository': None
+                    })
         
         # Sort the packages by name
         packages.sort(key=lambda p: p['name'])

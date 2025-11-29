@@ -16,9 +16,15 @@ class TestUploadPackageUseCase(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_storage_service = Mock(spec=StorageServiceInterface)
         self.mock_package_repository = Mock(spec=PackageRepository)
+        self.mock_config = {
+            'HOST': 'localhost',
+            'PORT': 5000,
+            'EXTERNAL_URL': 'http://localhost:5000'
+        }
         self.use_case = UploadPackageUseCase(
             self.mock_storage_service,
-            self.mock_package_repository
+            self.mock_package_repository,
+            self.mock_config
         )
         
     @patch('pub_proxy.core.use_cases.upload_package_use_case.tempfile.NamedTemporaryFile')

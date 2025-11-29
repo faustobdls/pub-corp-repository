@@ -1,6 +1,7 @@
 import requests
 from flask import Response
 from injector import inject
+from pub_proxy.core.app_config import AppConfig
 
 """
 Pub.dev Service module.
@@ -34,7 +35,7 @@ class PubDevService:
     """
     
     @inject
-    def __init__(self, config: dict):
+    def __init__(self, config: AppConfig):
         """
         Initialize the service with its dependencies.
         

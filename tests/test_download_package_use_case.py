@@ -18,10 +18,16 @@ class TestDownloadPackageUseCase(unittest.TestCase):
         self.mock_storage_service = Mock(spec=StorageServiceInterface)
         self.mock_pub_dev_service = Mock(spec=PubDevService)
         self.mock_package_repository = Mock(spec=PackageRepository)
+        self.mock_config = {
+            'HOST': 'localhost',
+            'PORT': 5000,
+            'EXTERNAL_URL': 'http://localhost:5000'
+        }
         self.use_case = DownloadPackageUseCase(
             self.mock_storage_service,
             self.mock_pub_dev_service,
-            self.mock_package_repository
+            self.mock_package_repository,
+            self.mock_config
         )
         
     def test_execute_package_exists_in_storage(self):
@@ -151,7 +157,10 @@ class TestDownloadPackageUseCase(unittest.TestCase):
         
         # Mock storage service methods
         self.mock_storage_service.upload_file_to_blob = Mock()
-        self.mock_storage_service.get_blob_url = Mock(return_value='http://example.com/blob')
+        # Mock storage service methods
+        self.mock_storage_service.upload_file_to_blob = Mock()
+        # get_blob_url is no longer used for archive_url construction in _cache_package
+        # self.mock_storage_service.get_blob_url = Mock(return_value='http://example.com/blob')
         
         # Mock package repository
         self.mock_package_repository.get_package.return_value = None
@@ -232,7 +241,10 @@ class TestDownloadPackageUseCase(unittest.TestCase):
         
         # Mock storage service methods
         self.mock_storage_service.upload_file_to_blob = Mock()
-        self.mock_storage_service.get_blob_url = Mock(return_value='http://example.com/blob')
+        # Mock storage service methods
+        self.mock_storage_service.upload_file_to_blob = Mock()
+        # get_blob_url is no longer used for archive_url construction in _cache_package
+        # self.mock_storage_service.get_blob_url = Mock(return_value='http://example.com/blob')
         
         # Create a package with a version that matches
         package_version = PackageVersion(
@@ -265,11 +277,15 @@ class TestDownloadPackageUseCase(unittest.TestCase):
         # Assertions
         mock_temp_file.assert_called_once_with(delete=False, suffix='.tar.gz')
         self.mock_storage_service.upload_file_to_blob.assert_called_once()
-        self.mock_storage_service.get_blob_url.assert_called_once()
+        mock_temp_file.assert_called_once_with(delete=False, suffix='.tar.gz')
+        self.mock_storage_service.upload_file_to_blob.assert_called_once()
+        # self.mock_storage_service.get_blob_url.assert_called_once()
+        self.mock_package_repository.save_package.assert_called_once()
         self.mock_package_repository.save_package.assert_called_once()
         
         # Verify that the archive URL was updated
-        self.assertEqual(package.versions[0].archive_url, 'http://example.com/blob')
+        # Verify that the archive URL was updated
+        self.assertEqual(package.versions[0].archive_url, 'http://localhost:5000/api/packages/test_package/versions/1.0.0/archive.tar.gz')
         mock_unlink.assert_called_once_with('/tmp/test_file')
 
 

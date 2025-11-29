@@ -4,6 +4,7 @@ from google.cloud import storage
 from injector import inject
 
 from pub_proxy.core.interfaces.storage_service_interface import StorageServiceInterface
+from pub_proxy.core.app_config import AppConfig
 
 """
 Google Cloud Platform Storage Service module.
@@ -39,7 +40,7 @@ class GCPStorageService(StorageServiceInterface):
     """
     
     @inject
-    def __init__(self, config: dict):
+    def __init__(self, config: AppConfig):
         """
         Initialize the service with its dependencies.
         

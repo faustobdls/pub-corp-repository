@@ -10,6 +10,8 @@ from pub_proxy.infrastructure.repositories.package_repository import PackageRepo
 from pub_proxy.infrastructure.services.gcp_storage_service import GCPStorageService
 from pub_proxy.infrastructure.services.local_storage_service import LocalStorageService
 from pub_proxy.infrastructure.services.pub_dev_service import PubDevService
+from pub_proxy.core.services.auth_service import AuthService
+from pub_proxy.core.app_config import AppConfig
 
 """
 Dependency injection container configuration module.
@@ -38,7 +40,7 @@ def configure_container(binder, config):
     @param config: The application configuration.
     """
     # Bind configuration
-    binder.bind(dict, to=config, scope=singleton)
+    binder.bind(AppConfig, to=AppConfig(config), scope=singleton)
     
     # Bind services
     storage_type = config.get('STORAGE_TYPE', 'local')  # Default to 'local' if not specified
@@ -61,3 +63,6 @@ def configure_container(binder, config):
     binder.bind(UploadPackageUseCase, to=UploadPackageUseCase, scope=singleton)
     binder.bind(DownloadPackageUseCase, to=DownloadPackageUseCase, scope=singleton)
     binder.bind(ListPackagesUseCase, to=ListPackagesUseCase, scope=singleton)
+    
+    # Bind auth service
+    binder.bind(AuthService, to=AuthService, scope=singleton)
