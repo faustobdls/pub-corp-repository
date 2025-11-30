@@ -163,6 +163,30 @@ class PackageRepository:
         
         return packages
     
+    def get_readme(self, package_name) -> Optional[str]:
+        """
+        Get the README content for a package.
+        
+        @param package_name: The name of the package.
+        @return: The README content, or None if not found.
+        """
+        blob_name = f'packages/{package_name}/README.md'
+        
+        if not self.storage_service.blob_exists(blob_name):
+            return None
+        
+        return self.storage_service.download_blob_as_string(blob_name)
+
+    def save_readme(self, package_name, content) -> None:
+        """
+        Save the README content for a package.
+        
+        @param package_name: The name of the package.
+        @param content: The README content.
+        """
+        blob_name = f'packages/{package_name}/README.md'
+        self.storage_service.upload_string_to_blob(content, blob_name)
+    
     def save_package_info(self, package_name, package_info) -> None:
         """
         Save package information from pub.dev.

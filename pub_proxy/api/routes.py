@@ -258,6 +258,32 @@ def register_routes(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
+    @api_bp.route('/api/auth/login', methods=['POST'])
+    @inject
+    def login(auth_service: AuthService):
+        """
+        Authenticate a user and return a token.
+        
+        @param auth_service: The service for authentication.
+        @return: A JSON response with the token.
+        """
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Missing request body'}), 400
+            
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Missing username or password'}), 400
+            
+        token = auth_service.login(username, password)
+        
+        if token:
+            return jsonify({'token': token})
+        else:
+            return jsonify({'error': 'Invalid credentials'}), 401
+
     # Register the blueprint with the application
     app.register_blueprint(api_bp)
             

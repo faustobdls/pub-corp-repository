@@ -58,7 +58,11 @@ class ProxyPackageUseCase:
         
         if package:
             # Return the package information from the repository
-            return self._package_to_dict(package)
+            info = self._package_to_dict(package)
+            readme = self.package_repository.get_readme(package_name)
+            if readme:
+                info['readme'] = readme
+            return info
         
         # If not in the repository, fetch from pub.dev
         package_info = self.pub_dev_service.get_package_info(package_name)
@@ -67,6 +71,12 @@ class ProxyPackageUseCase:
         if package_info:
             self.package_repository.save_package_info(package_name, package_info)
         
+        # Add README if available (locally or from pub.dev if we implemented that, but for now just local)
+        # Note: We might want to fetch README from pub.dev too, but let's start with local/internal
+        readme = self.package_repository.get_readme(package_name)
+        if readme:
+            package_info['readme'] = readme
+            
         return package_info
     
     def get_package_version(self, package_name, version):
@@ -163,7 +173,8 @@ class ProxyPackageUseCase:
         return {
             'name': package.name,
             'latest': latest_version_info,
-            'versions': versions_list
+            'versions': versions_list,
+            'is_private': package.is_private
         }
     
     def _version_to_dict(self, version):

@@ -40,6 +40,11 @@ class Config:
     HOST = os.getenv('HOST', '0.0.0.0')
     PORT = int(os.getenv('PORT', '5000'))
     
+    # Auth settings
+    JWT_SECRET = os.getenv('JWT_SECRET', 'super-secret-jwt-key')
+    ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin')
+    
     # Storage settings
     STORAGE_TYPE = os.getenv('STORAGE_TYPE', 'local')  # 'gcp' or 'local'
     

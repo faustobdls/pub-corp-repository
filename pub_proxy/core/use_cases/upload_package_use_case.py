@@ -137,6 +137,14 @@ class UploadPackageUseCase:
             # Save the package information to the repository
             self.package_repository.save_package(package)
             
+            # Extract and save README if available
+            try:
+                readme_content = self._extract_readme(temp_file.name)
+                if readme_content:
+                    self.package_repository.save_readme(package_name, readme_content)
+            except Exception as e:
+                print(f"Warning: Failed to extract README: {e}")
+
             return {
                 'success': True,
                 'package': package_name,
@@ -150,6 +158,32 @@ class UploadPackageUseCase:
             if os.path.exists(temp_file.name):
                 os.unlink(temp_file.name)
     
+    def _extract_readme(self, tarball_path):
+        """
+        Extract README.md content from the tarball.
+        
+        @param tarball_path: Path to the tarball file.
+        @return: The content of README.md or None if not found.
+        """
+        try:
+            with tarfile.open(tarball_path, "r:gz") as tar:
+                # Find README.md (case insensitive)
+                readme_member = None
+                for member in tar.getmembers():
+                    if member.name.lower().endswith('readme.md'):
+                        readme_member = member
+                        break
+                
+                if not readme_member:
+                    return None
+                
+                f = tar.extractfile(readme_member)
+                return f.read().decode('utf-8')
+                
+        except Exception as e:
+            print(f"Error extracting README: {e}")
+            return None
+
     def _extract_metadata(self, tarball_path):
         """
         Extract package name and version from pubspec.yaml in the tarball.
